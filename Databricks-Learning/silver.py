@@ -1,50 +1,57 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Silver Layer
-# MAGIC Clean, join, and enrich Bronze tables into Silver tables.
+# MAGIC # Silver Layer Ingestion (UC)
+# MAGIC Transform bronze tables into silver (cleaned & joined) in UC silver schema.
 
 # COMMAND ----------
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, upper
+from pyspark.sql.functions import col
+import datetime
 
 spark = SparkSession.builder.getOrCreate()
 
 # ---------- CONFIG ----------
-BRONZE_SCHEMA = "bronze"
-SILVER_SCHEMA = "silver"
+UC_CATALOG = "sales"          # Replace with your UC catalog
+SILVER_SCHEMA = f"{UC_CATALOG}.silver"
+BRONZE_SCHEMA = f"{UC_CATALOG}.bronze"
+TABLES = ["customers", "orders", "sales"]
+
+today = datetime.datetime.today().strftime("%Y-%m-%d")
 
 # COMMAND ----------
-# Read Bronze tables
-df_customers = spark.table(f"{BRONZE_SCHEMA}.customers")
-df_orders = spark.table(f"{BRONZE_SCHEMA}.orders")
-df_sales = spark.table(f"{BRONZE_SCHEMA}.sales")
+# Read bronze tables
+customers_df = spark.table(f"{BRONZE_SCHEMA}.customers")
+orders_df = spark.table(f"{BRONZE_SCHEMA}.orders")
+sales_df = spark.table(f"{BRONZE_SCHEMA}.sales")
+
+# Example Silver transformations:
+# - Remove duplicates
+# - Correct data types
+# - Join orders with customers
+orders_clean = orders_df.dropDuplicates(["order_id"]) \
+                        .withColumn("quantity", col("quantity").cast("int")) \
+                        .withColumn("price", col("price").cast("double"))
+
+customers_clean = customers_df.dropDuplicates(["customer_id"])
+
+orders_customers = orders_clean.join(customers_clean, on="customer_id", how="left")
+
+sales_clean = sales_df.dropDuplicates(["sale_id"]) \
+                      .withColumn("total_amount", col("total_amount").cast("double")) \
+                      .withColumn("discount", col("discount").cast("double")) \
+                      .withColumn("tax", col("tax").cast("double")) \
+                      .withColumn("final_amount", col("final_amount").cast("double"))
 
 # COMMAND ----------
-# Cleaning example: remove null customer_id and normalize names
-df_customers_clean = df_customers.filter(col("customer_id").isNotNull()) \
-                                 .withColumn("name", upper(col("name")))
-
-# COMMAND ----------
-# Join orders with customers
-df_orders_enriched = df_orders.join(df_customers_clean, "customer_id", "left") \
-                              .withColumnRenamed("name", "customer_name") \
-                              .withColumnRenamed("email", "customer_email")
-
-# Join with sales
-df_sales_enriched = df_sales.join(df_orders_enriched, "order_id", "left")
-
-# COMMAND ----------
-# Write Silver tables to Delta in UC
-df_customers_clean.write.format("delta") \
+# Write Silver tables
+orders_customers.write.format("delta") \
     .mode("overwrite") \
-    .saveAsTable(f"{SILVER_SCHEMA}.customers")
+    .option("overwriteSchema", "true") \
+    .saveAsTable(f"{SILVER_SCHEMA}.orders_customers")
 
-df_orders_enriched.write.format("delta") \
+sales_clean.write.format("delta") \
     .mode("overwrite") \
-    .saveAsTable(f"{SILVER_SCHEMA}.orders")
+    .option("overwriteSchema", "true") \
+    .saveAsTable(f"{SILVER_SCHEMA}.sales_clean")
 
-df_sales_enriched.write.format("delta") \
-    .mode("overwrite") \
-    .saveAsTable(f"{SILVER_SCHEMA}.sales")
-
-print("✅ Silver tables written to UC schema 'silver'")
+print("✅ Silver tables created in UC silver schema")

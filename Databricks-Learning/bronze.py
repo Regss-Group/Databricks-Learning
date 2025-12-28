@@ -1,18 +1,19 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Bronze Layer Ingestion
-# MAGIC Ingest raw CSV data from S3 into Delta tables in UC bronze schema.
+# MAGIC # Bronze Layer Ingestion (UC)
+# MAGIC Ingest raw CSV data from S3 into Delta tables inside UC bronze schema.
 
 # COMMAND ----------
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import lit, input_file_name
+from pyspark.sql.functions import lit, col
 import datetime
 
 spark = SparkSession.builder.getOrCreate()
 
 # ---------- CONFIG ----------
 BUCKET_NAME = "learning-databricks-0001"
-BRONZE_SCHEMA = "bronze"
+UC_CATALOG = "sales"            # Replace with your UC catalog
+BRONZE_SCHEMA = f"{UC_CATALOG}.bronze"
 TABLES = ["customers", "orders", "sales"]
 
 today = datetime.datetime.today().strftime("%Y-%m-%d")
@@ -28,12 +29,12 @@ def ingest_bronze(table_name):
     
     # Add metadata columns
     df = df.withColumn("load_date", lit(today)) \
-           .withColumn("source_file", input_file_name())
+           .withColumn("source_file", col("_metadata.file_path"))  # UC-compatible
     
     # Write to Delta in UC bronze schema
-    delta_table_path = f"dbfs:/mnt/uc/{BRONZE_SCHEMA}/{table_name}"
+    delta_table_path = f"dbfs:/mnt/uc/bronze/{table_name}"  # optional path
     
-    print(f"💾 Writing {table_name} to Delta at {delta_table_path}")
+    print(f"💾 Writing {table_name} to Delta at {BRONZE_SCHEMA}.{table_name}")
     
     df.write.format("delta") \
         .mode("overwrite") \
